@@ -18,11 +18,12 @@
 <body>
   <h1>Fuel Friends</h1>
 
-  <div class="row">
+  <!-- Viktigt: form + preventDefault => ingen POST till / -->
+  <form id="addForm" class="row" autocomplete="off">
     <input id="nameInput" placeholder="Namn (minst 2 tecken)" />
-    <button id="addBtn">Lägg till</button>
-    <button class="danger" id="resetAllBtn">Nollställ alla</button>
-  </div>
+    <button type="submit" id="addBtn">Lägg till</button>
+    <button type="button" class="danger" id="resetAllBtn">Nollställ alla</button>
+  </form>
 
   <div id="error" class="error"></div>
 
@@ -42,6 +43,10 @@
 const elError = document.getElementById("error");
 const tbody = document.getElementById("tbody");
 const nameInput = document.getElementById("nameInput");
+const addForm = document.getElementById("addForm");
+
+// Bas-URL (relativt funkar, men detta gör det tydligt)
+const API = "/api";
 
 function showError(msg) {
   elError.textContent = msg || "";
@@ -50,21 +55,33 @@ function showError(msg) {
 
 async function req(path, opts = {}) {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...opts
+    method: "GET",
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      ...(opts.headers || {})
+    }
   });
 
   if (!res.ok) {
+    // Försök läsa både JSON och text (Azure kan skicka text för 405)
+    let text = "";
+    try { text = await res.text(); } catch {}
     let msg = `HTTP ${res.status}`;
     try {
-      const data = await res.json();
-      msg = data.detail || JSON.stringify(data);
-    } catch {}
+      const data = text ? JSON.parse(text) : null;
+      msg = (data && (data.detail || data.message)) ? (data.detail || data.message) : (text || msg);
+    } catch {
+      msg = text || msg;
+    }
     throw new Error(msg);
   }
 
   if (res.status === 204) return null;
-  return res.json();
+
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return res.json();
+  return res.text();
 }
 
 function fmt(n) { return Number(n).toFixed(2); }
@@ -76,7 +93,7 @@ function escapeHtml(s) {
 
 async function load() {
   showError("");
-  const friends = await req("/api/friends");
+  const friends = await req(`${API}/friends`);
   tbody.innerHTML = "";
 
   for (const f of friends) {
@@ -86,32 +103,43 @@ async function load() {
       <td>${fmt(f.totalLiters)}</td>
       <td>${fmt(f.totalSek)}</td>
       <td class="row">
-        <button data-act="add" data-id="${f.id}">+ liter</button>
-        <button data-act="rename" data-id="${f.id}">byt namn</button>
-        <button data-act="reset" data-id="${f.id}">nollställ</button>
-        <button class="danger" data-act="del" data-id="${f.id}">ta bort</button>
+        <button type="button" data-act="add" data-id="${f.id}">+ liter</button>
+        <button type="button" data-act="rename" data-id="${f.id}">byt namn</button>
+        <button type="button" data-act="reset" data-id="${f.id}">nollställ</button>
+        <button type="button" class="danger" data-act="del" data-id="${f.id}">ta bort</button>
       </td>
     `;
     tbody.appendChild(tr);
   }
 }
 
-document.getElementById("addBtn").addEventListener("click", async () => {
+// FORM submit => POST /api/friends (aldrig POST /)
+addForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
   try {
     const name = nameInput.value.trim();
     if (name.length < 2) return showError("Namn måste vara minst 2 tecken.");
-    await req("/api/friends", { method: "POST", body: JSON.stringify({ name }) });
+
+    await req(`${API}/friends`, {
+      method: "POST",
+      body: JSON.stringify({ name })
+    });
+
     nameInput.value = "";
     await load();
-  } catch (e) { showError(e.message); }
+  } catch (err) {
+    showError(err.message);
+  }
 });
 
 document.getElementById("resetAllBtn").addEventListener("click", async () => {
   if (!confirm("Nollställ ALLA?")) return;
   try {
-    await req("/api/reset-all", { method: "POST" });
+    await req(`${API}/reset-all`, { method: "POST" });
     await load();
-  } catch (e) { showError(e.message); }
+  } catch (err) {
+    showError(err.message);
+  }
 });
 
 tbody.addEventListener("click", async (e) => {
@@ -129,7 +157,11 @@ tbody.addEventListener("click", async (e) => {
       if (litersStr === null) return;
       const liters = Number(litersStr);
       if (!Number.isFinite(liters) || liters <= 0) return showError("Liter måste vara ett tal > 0.");
-      await req(`/api/friends/${id}/add-liters`, { method: "POST", body: JSON.stringify({ liters }) });
+
+      await req(`${API}/friends/${id}/add-liters`, {
+        method: "POST",
+        body: JSON.stringify({ liters })
+      });
     }
 
     if (act === "rename") {
@@ -137,17 +169,21 @@ tbody.addEventListener("click", async (e) => {
       if (name === null) return;
       const cleaned = name.trim();
       if (cleaned.length < 2) return showError("Namn måste vara minst 2 tecken.");
-      await req(`/api/friends/${id}`, { method: "PUT", body: JSON.stringify({ name: cleaned }) });
+
+      await req(`${API}/friends/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ name: cleaned })
+      });
     }
 
     if (act === "reset") {
       if (!confirm("Nollställ vän?")) return;
-      await req(`/api/friends/${id}/reset`, { method: "POST" });
+      await req(`${API}/friends/${id}/reset`, { method: "POST" });
     }
 
     if (act === "del") {
       if (!confirm("Ta bort vän?")) return;
-      await req(`/api/friends/${id}`, { method: "DELETE" });
+      await req(`${API}/friends/${id}`, { method: "DELETE" });
     }
 
     await load();
@@ -156,7 +192,7 @@ tbody.addEventListener("click", async (e) => {
   }
 });
 
-load().catch(e => showError(e.message));
+load().catch(err => showError(err.message));
 </script>
 </body>
 </html>
