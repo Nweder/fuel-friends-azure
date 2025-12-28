@@ -12,8 +12,6 @@ PRICE_PER_LITER = 10.0
 # Azure: set DB_PATH=/home/fuel.db  (persistent)
 DB_PATH = os.getenv("DB_PATH", "./fuel.db")
 
-# When frontend is served by same host, CORS not needed.
-# Keep it safe: allow the same origin by default.
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 
 app = FastAPI(title="Fuel Friends")
@@ -26,10 +24,6 @@ if CORS_ORIGINS:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-# Serve frontend from / (same URL as API)
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
 
 def connect():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -189,3 +183,5 @@ def reset_all():
     conn.commit()
     conn.close()
     return {"ok": True}
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
