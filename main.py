@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -9,8 +9,11 @@ from pydantic import BaseModel, Field
 PRICE_PER_LITER = 10.0
 
 # Local: ./fuel.db
-# Azure: set DB_PATH=/home/fuel.db  (persistent)
+# Azure (persistent): set DB_PATH=/home/fuel.db
 DB_PATH = os.getenv("DB_PATH", "./fuel.db")
+
+# App password (set in Azure App Service Configuration)
+APP_PASSWORD = os.getenv("APP_PASSWORD")  # INGEN default i prod!
 
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 
@@ -25,6 +28,31 @@ if CORS_ORIGINS:
         allow_headers=["*"],
     )
 
+# ---------- AUTH ----------
+def require_password(x_app_password: str | None = Header(default=None, alias="X-App-Password")):
+    # Om du inte satt APP_PASSWORD i Azure -> stoppa direkt (så du märker det)
+    if not APP_PASSWORD:
+        raise HTTPException(status_code=500, detail="APP_PASSWORD is not configured in Azure")
+
+    if x_app_password != APP_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@app.post("/api/login")
+async def login(req: Request):
+    body = await req.json()
+    password = body.get("password")
+
+    if not APP_PASSWORD:
+        raise HTTPException(status_code=500, detail="APP_PASSWORD is not configured in Azure")
+
+    if password != APP_PASSWORD:
+        raise HTTPException(status_code=401, detail="Fel lösenord")
+
+    return {"ok": True}
+
+
+# ---------- DB ----------
 def connect():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -57,6 +85,8 @@ def calc_total_sek(total_liters: float) -> float:
 def clean_name(name: str) -> str:
     return name.strip()
 
+
+# ---------- MODELS ----------
 class FriendCreate(BaseModel):
     name: str = Field(min_length=2)
 
@@ -66,7 +96,9 @@ class FriendUpdate(BaseModel):
 class AddLitersBody(BaseModel):
     liters: float = Field(gt=0)
 
-@app.get("/api/friends")
+
+# ---------- PROTECTED API (requires X-App-Password) ----------
+@app.get("/api/friends", dependencies=[Depends(require_password)])
 def list_friends():
     conn = connect()
     cur = conn.cursor()
@@ -85,7 +117,7 @@ def list_friends():
         })
     return out
 
-@app.post("/api/friends", status_code=201)
+@app.post("/api/friends", status_code=201, dependencies=[Depends(require_password)])
 def create_friend(body: FriendCreate):
     name = clean_name(body.name)
     if len(name) < 2:
@@ -103,7 +135,7 @@ def create_friend(body: FriendCreate):
 
     return {"id": new_id, "name": name, "totalLiters": 0.0, "totalSek": 0.0}
 
-@app.put("/api/friends/{id}")
+@app.put("/api/friends/{id}", dependencies=[Depends(require_password)])
 def rename_friend(id: int, body: FriendUpdate):
     name = clean_name(body.name)
     if len(name) < 2:
@@ -124,7 +156,7 @@ def rename_friend(id: int, body: FriendUpdate):
 
     return {"id": id, "name": name, "totalLiters": liters, "totalSek": calc_total_sek(liters)}
 
-@app.delete("/api/friends/{id}", status_code=204)
+@app.delete("/api/friends/{id}", status_code=204, dependencies=[Depends(require_password)])
 def delete_friend(id: int):
     conn = connect()
     cur = conn.cursor()
@@ -138,11 +170,9 @@ def delete_friend(id: int):
     conn.close()
     return
 
-@app.post("/api/friends/{id}/add-liters")
+@app.post("/api/friends/{id}/add-liters", dependencies=[Depends(require_password)])
 def add_liters(id: int, body: AddLitersBody):
     liters_to_add = float(body.liters)
-    if liters_to_add <= 0:
-        raise HTTPException(400, detail="Liters must be > 0.")
 
     conn = connect()
     cur = conn.cursor()
@@ -159,7 +189,7 @@ def add_liters(id: int, body: AddLitersBody):
 
     return {"id": id, "name": row["name"], "totalLiters": new_total, "totalSek": calc_total_sek(new_total)}
 
-@app.post("/api/friends/{id}/reset")
+@app.post("/api/friends/{id}/reset", dependencies=[Depends(require_password)])
 def reset_friend(id: int):
     conn = connect()
     cur = conn.cursor()
@@ -175,7 +205,7 @@ def reset_friend(id: int):
 
     return {"id": id, "name": row["name"], "totalLiters": 0.0, "totalSek": 0.0}
 
-@app.post("/api/reset-all")
+@app.post("/api/reset-all", dependencies=[Depends(require_password)])
 def reset_all():
     conn = connect()
     cur = conn.cursor()
@@ -184,4 +214,6 @@ def reset_all():
     conn.close()
     return {"ok": True}
 
+
+# Frontend (static/)
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

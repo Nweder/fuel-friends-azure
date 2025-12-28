@@ -3,31 +3,66 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fuel Friends</title>
+  <title>Khazieh Emin</title>
   <style>
-    body { font-family: system-ui, Arial; max-width: 900px; margin: 24px auto; padding: 0 12px; }
+    body {
+      font-family: system-ui, Arial;
+      max-width: 900px;
+      margin: 24px auto;
+      padding: 0 12px;
+
+      background:
+        linear-gradient(rgba(255,255,255,0.92), rgba(255,255,255,0.92)),
+        url("/static/bilder/IMG_5188.JPG") no-repeat center center fixed;
+      background-size: cover;
+    }
+
+    h1 { margin-bottom: 12px; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     input, button { padding: 10px 12px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; background: rgba(255,255,255,0.75); }
+    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: top; }
     .error { background: #ffe5e5; border: 1px solid #ffb3b3; padding: 10px; margin-top: 10px; display:none; }
     .danger { background: #c62828; color: white; border: 0; }
     button { cursor: pointer; }
+    .note { font-size: 12px; opacity: 0.8; margin-top: 8px; }
+
+    /* Login box */
+    .card {
+      background: rgba(255,255,255,0.85);
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 10px;
+      padding: 14px;
+      margin-top: 12px;
+    }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
-  <h1>Fuel Friends</h1>
+  <h1>Khazieh Emin</h1>
 
-  <!-- Viktigt: form + preventDefault => ingen POST till / -->
-  <form id="addForm" class="row" autocomplete="off">
+  <!-- LOGIN (matchar main.py: POST /api/login med {password}) -->
+  <div id="loginCard" class="card">
+    <div class="row">
+      <input id="passwordInput" type="password" placeholder="Lösenord" />
+      <button id="loginBtn" type="button">Logga in</button>
+      <button id="logoutBtn" type="button" class="danger">Logga ut</button>
+    </div>
+    <div class="note">
+      Appen skyddas av backend (header <code>X-App-Password</code>). Lösenordet finns i Azure som env <code>APP_PASSWORD</code>.
+    </div>
+  </div>
+
+  <div id="error" class="error"></div>
+
+  <!-- APP UI -->
+  <form id="addForm" class="row hidden" autocomplete="off">
     <input id="nameInput" placeholder="Namn (minst 2 tecken)" />
     <button type="submit" id="addBtn">Lägg till</button>
     <button type="button" class="danger" id="resetAllBtn">Nollställ alla</button>
   </form>
 
-  <div id="error" class="error"></div>
-
-  <table>
+  <table id="table" class="hidden">
     <thead>
       <tr>
         <th>Namn</th>
@@ -40,33 +75,62 @@
   </table>
 
 <script>
+const API = "/api";
+
 const elError = document.getElementById("error");
 const tbody = document.getElementById("tbody");
-const nameInput = document.getElementById("nameInput");
-const addForm = document.getElementById("addForm");
 
-// Bas-URL (relativt funkar, men detta gör det tydligt)
-const API = "/api";
+const addForm = document.getElementById("addForm");
+const nameInput = document.getElementById("nameInput");
+const resetAllBtn = document.getElementById("resetAllBtn");
+
+const loginCard = document.getElementById("loginCard");
+const passwordInput = document.getElementById("passwordInput");
+const loginBtn = document.getElementById("loginBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+
+const table = document.getElementById("table");
+
+let APP_PASSWORD = localStorage.getItem("APP_PASSWORD") || "";
 
 function showError(msg) {
   elError.textContent = msg || "";
   elError.style.display = msg ? "block" : "none";
 }
 
+function setLoggedIn(isLoggedIn) {
+  addForm.classList.toggle("hidden", !isLoggedIn);
+  table.classList.toggle("hidden", !isLoggedIn);
+  logoutBtn.disabled = !isLoggedIn;
+}
+
+function fmt(n) { return Number(n).toFixed(2); }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[m]));
+}
+
+// Generic request helper
 async function req(path, opts = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(opts.headers || {})
+  };
+
+  // Alla skyddade endpoints behöver header (main.py kräver X-App-Password)
+  if (APP_PASSWORD) {
+    headers["X-App-Password"] = APP_PASSWORD;
+  }
+
   const res = await fetch(path, {
     method: "GET",
     ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      ...(opts.headers || {})
-    }
+    headers
   });
 
   if (!res.ok) {
-    // Försök läsa både JSON och text (Azure kan skicka text för 405)
-    let text = "";
-    try { text = await res.text(); } catch {}
+    const text = await res.text().catch(() => "");
     let msg = `HTTP ${res.status}`;
     try {
       const data = text ? JSON.parse(text) : null;
@@ -84,11 +148,30 @@ async function req(path, opts = {}) {
   return res.text();
 }
 
-function fmt(n) { return Number(n).toFixed(2); }
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, m => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
-  }[m]));
+// LOGIN: POST /api/login { password }
+async function doLogin(password) {
+  showError("");
+  const res = await req(`${API}/login`, {
+    method: "POST",
+    // login-endpointen använder inte headern, men det skadar inte att skicka den
+    body: JSON.stringify({ password })
+  });
+
+  if (!res || !res.ok) throw new Error("Login misslyckades");
+
+  APP_PASSWORD = password;
+  localStorage.setItem("APP_PASSWORD", APP_PASSWORD);
+
+  setLoggedIn(true);
+  await load();
+}
+
+function doLogout() {
+  APP_PASSWORD = "";
+  localStorage.removeItem("APP_PASSWORD");
+  tbody.innerHTML = "";
+  setLoggedIn(false);
+  showError("Utloggad.");
 }
 
 async function load() {
@@ -113,7 +196,28 @@ async function load() {
   }
 }
 
-// FORM submit => POST /api/friends (aldrig POST /)
+// UI events
+loginBtn.addEventListener("click", async () => {
+  try {
+    const pw = (passwordInput.value || "").trim();
+    if (!pw) return showError("Skriv lösenord.");
+    await doLogin(pw);
+    passwordInput.value = "";
+  } catch (e) {
+    showError(e.message);
+    setLoggedIn(false);
+  }
+});
+
+passwordInput.addEventListener("keydown", async (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    loginBtn.click();
+  }
+});
+
+logoutBtn.addEventListener("click", () => doLogout());
+
 addForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
@@ -129,16 +233,18 @@ addForm.addEventListener("submit", async (e) => {
     await load();
   } catch (err) {
     showError(err.message);
+    if (String(err.message || "").includes("401")) doLogout();
   }
 });
 
-document.getElementById("resetAllBtn").addEventListener("click", async () => {
+resetAllBtn.addEventListener("click", async () => {
   if (!confirm("Nollställ ALLA?")) return;
   try {
     await req(`${API}/reset-all`, { method: "POST" });
     await load();
   } catch (err) {
     showError(err.message);
+    if (String(err.message || "").includes("401")) doLogout();
   }
 });
 
@@ -189,10 +295,25 @@ tbody.addEventListener("click", async (e) => {
     await load();
   } catch (err) {
     showError(err.message);
+    if (String(err.message || "").includes("401")) doLogout();
   }
 });
 
-load().catch(err => showError(err.message));
+// Auto: om vi har sparat lösenord, testa att ladda data.
+// Om 401 -> logga ut och visa login.
+(async function boot() {
+  try {
+    if (APP_PASSWORD) {
+      setLoggedIn(true);
+      await load();
+    } else {
+      setLoggedIn(false);
+    }
+  } catch (e) {
+    // fel lösen -> rensa
+    doLogout();
+  }
+})();
 </script>
 </body>
 </html>
