@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fuel Friends</title>
+  <style>
+    body { font-family: system-ui, Arial; max-width: 900px; margin: 24px auto; padding: 0 12px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input, button { padding: 10px 12px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
+    .error { background: #ffe5e5; border: 1px solid #ffb3b3; padding: 10px; margin-top: 10px; display:none; }
+    .danger { background: #c62828; color: white; border: 0; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Fuel Friends</h1>
+
+  <div class="row">
+    <input id="nameInput" placeholder="Namn (minst 2 tecken)" />
+    <button id="addBtn">Lägg till</button>
+    <button class="danger" id="resetAllBtn">Nollställ alla</button>
+  </div>
+
+  <div id="error" class="error"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Namn</th>
+        <th>Liter</th>
+        <th>Summa (kr)</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+<script>
+const elError = document.getElementById("error");
+const tbody = document.getElementById("tbody");
+const nameInput = document.getElementById("nameInput");
+
+function showError(msg) {
+  elError.textContent = msg || "";
+  elError.style.display = msg ? "block" : "none";
+}
+
+async function req(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts
+  });
+
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      msg = data.detail || JSON.stringify(data);
+    } catch {}
+    throw new Error(msg);
+  }
+
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function fmt(n) { return Number(n).toFixed(2); }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[m]));
+}
+
+async function load() {
+  showError("");
+  const friends = await req("/api/friends");
+  tbody.innerHTML = "";
+
+  for (const f of friends) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(f.name)}</td>
+      <td>${fmt(f.totalLiters)}</td>
+      <td>${fmt(f.totalSek)}</td>
+      <td class="row">
+        <button data-act="add" data-id="${f.id}">+ liter</button>
+        <button data-act="rename" data-id="${f.id}">byt namn</button>
+        <button data-act="reset" data-id="${f.id}">nollställ</button>
+        <button class="danger" data-act="del" data-id="${f.id}">ta bort</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+document.getElementById("addBtn").addEventListener("click", async () => {
+  try {
+    const name = nameInput.value.trim();
+    if (name.length < 2) return showError("Namn måste vara minst 2 tecken.");
+    await req("/api/friends", { method: "POST", body: JSON.stringify({ name }) });
+    nameInput.value = "";
+    await load();
+  } catch (e) { showError(e.message); }
+});
+
+document.getElementById("resetAllBtn").addEventListener("click", async () => {
+  if (!confirm("Nollställ ALLA?")) return;
+  try {
+    await req("/api/reset-all", { method: "POST" });
+    await load();
+  } catch (e) { showError(e.message); }
+});
+
+tbody.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+
+  const id = btn.dataset.id;
+  const act = btn.dataset.act;
+
+  try {
+    showError("");
+
+    if (act === "add") {
+      const litersStr = prompt("Liter att lägga till:", "1");
+      if (litersStr === null) return;
+      const liters = Number(litersStr);
+      if (!Number.isFinite(liters) || liters <= 0) return showError("Liter måste vara ett tal > 0.");
+      await req(`/api/friends/${id}/add-liters`, { method: "POST", body: JSON.stringify({ liters }) });
+    }
+
+    if (act === "rename") {
+      const name = prompt("Nytt namn:");
+      if (name === null) return;
+      const cleaned = name.trim();
+      if (cleaned.length < 2) return showError("Namn måste vara minst 2 tecken.");
+      await req(`/api/friends/${id}`, { method: "PUT", body: JSON.stringify({ name: cleaned }) });
+    }
+
+    if (act === "reset") {
+      if (!confirm("Nollställ vän?")) return;
+      await req(`/api/friends/${id}/reset`, { method: "POST" });
+    }
+
+    if (act === "del") {
+      if (!confirm("Ta bort vän?")) return;
+      await req(`/api/friends/${id}`, { method: "DELETE" });
+    }
+
+    await load();
+  } catch (err) {
+    showError(err.message);
+  }
+});
+
+load().catch(e => showError(e.message));
+</script>
+</body>
+</html>
