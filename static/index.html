@@ -5,60 +5,50 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Khazieh Emin</title>
   <style>
-    body {
+    body{
       font-family: system-ui, Arial;
-      max-width: 900px;
+      max-width: 1100px;
       margin: 24px auto;
       padding: 0 12px;
-
       background:
         linear-gradient(rgba(255,255,255,0.92), rgba(255,255,255,0.92)),
-        url("/static/bilder/IMG_5188.JPG") no-repeat center center fixed;
+        url("./bilder/IMG_5188.JPG") no-repeat center center fixed;
       background-size: cover;
     }
 
     h1 { margin-bottom: 12px; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    input, button { padding: 10px 12px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 12px; background: rgba(255,255,255,0.75); }
-    th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: top; }
-    .error { background: #ffe5e5; border: 1px solid #ffb3b3; padding: 10px; margin-top: 10px; display:none; }
-    .danger { background: #c62828; color: white; border: 0; }
-    button { cursor: pointer; }
-    .note { font-size: 12px; opacity: 0.8; margin-top: 8px; }
-
-    /* Login box */
-    .card {
-      background: rgba(255,255,255,0.85);
-      border: 1px solid rgba(0,0,0,0.08);
-      border-radius: 10px;
-      padding: 14px;
-      margin-top: 12px;
-    }
-    .hidden { display: none !important; }
+    .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+    input,button{padding:10px 12px;}
+    table{width:100%; border-collapse:collapse; margin-top:12px; background:rgba(255,255,255,0.75);}
+    th,td{border-bottom:1px solid #ddd; padding:10px; text-align:left; vertical-align:top;}
+    .error{background:#ffe5e5; border:1px solid #ffb3b3; padding:10px; margin-top:10px; display:none;}
+    .danger{background:#c62828; color:white; border:0;}
+    button{cursor:pointer;}
+    .note{font-size:12px; opacity:0.8; margin-top:8px;}
+    .card{background:rgba(255,255,255,0.85); border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:14px; margin-top:12px;}
+    .hidden{display:none !important;}
+    .kvar{font-weight:700;}
   </style>
 </head>
 <body>
   <h1>Khazieh Emin</h1>
 
-  <!-- LOGIN (matchar main.py: POST /api/login med {password}) -->
+  <!-- LOGIN -->
   <div id="loginCard" class="card">
     <div class="row">
       <input id="passwordInput" type="password" placeholder="Lösenord" />
       <button id="loginBtn" type="button">Logga in</button>
       <button id="logoutBtn" type="button" class="danger">Logga ut</button>
     </div>
-    <div class="note">
-      Appen skyddas av backend (header <code>X-App-Password</code>). Lösenordet finns i Azure som env <code>APP_PASSWORD</code>.
-    </div>
+    <div class="note">Lösenordet finns i Azure som env <code>APP_PASSWORD</code>.</div>
   </div>
 
   <div id="error" class="error"></div>
 
-  <!-- APP UI -->
+  <!-- APP -->
   <form id="addForm" class="row hidden" autocomplete="off">
     <input id="nameInput" placeholder="Namn (minst 2 tecken)" />
-    <button type="submit" id="addBtn">Lägg till</button>
+    <button type="submit">Lägg till</button>
     <button type="button" class="danger" id="resetAllBtn">Nollställ alla</button>
   </form>
 
@@ -67,7 +57,9 @@
       <tr>
         <th>Namn</th>
         <th>Liter</th>
-        <th>Summa (kr)</th>
+        <th>Total (kr)</th>
+        <th>Betalt (kr)</th>
+        <th>Kvar (kr)</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -84,7 +76,6 @@ const addForm = document.getElementById("addForm");
 const nameInput = document.getElementById("nameInput");
 const resetAllBtn = document.getElementById("resetAllBtn");
 
-const loginCard = document.getElementById("loginCard");
 const passwordInput = document.getElementById("passwordInput");
 const loginBtn = document.getElementById("loginBtn");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -93,80 +84,61 @@ const table = document.getElementById("table");
 
 let APP_PASSWORD = localStorage.getItem("APP_PASSWORD") || "";
 
-function showError(msg) {
+function showError(msg){
   elError.textContent = msg || "";
   elError.style.display = msg ? "block" : "none";
 }
 
-function setLoggedIn(isLoggedIn) {
+function setLoggedIn(isLoggedIn){
   addForm.classList.toggle("hidden", !isLoggedIn);
   table.classList.toggle("hidden", !isLoggedIn);
   logoutBtn.disabled = !isLoggedIn;
 }
 
-function fmt(n) { return Number(n).toFixed(2); }
-function escapeHtml(s) {
+function fmt(n){ return Number(n).toFixed(2); }
+function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, m => ({
     "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
   }[m]));
 }
 
-// Generic request helper
-async function req(path, opts = {}) {
+async function req(path, opts = {}){
   const headers = {
     "Content-Type": "application/json",
     ...(opts.headers || {})
   };
+  if (APP_PASSWORD) headers["X-App-Password"] = APP_PASSWORD;
 
-  // Alla skyddade endpoints behöver header (main.py kräver X-App-Password)
-  if (APP_PASSWORD) {
-    headers["X-App-Password"] = APP_PASSWORD;
-  }
+  const res = await fetch(path, { method:"GET", ...opts, headers });
 
-  const res = await fetch(path, {
-    method: "GET",
-    ...opts,
-    headers
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
+  if (!res.ok){
+    const text = await res.text().catch(()=> "");
     let msg = `HTTP ${res.status}`;
-    try {
+    try{
       const data = text ? JSON.parse(text) : null;
       msg = (data && (data.detail || data.message)) ? (data.detail || data.message) : (text || msg);
-    } catch {
+    }catch{
       msg = text || msg;
     }
     throw new Error(msg);
   }
 
   if (res.status === 204) return null;
-
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return res.json();
   return res.text();
 }
 
-// LOGIN: POST /api/login { password }
-async function doLogin(password) {
+async function doLogin(password){
   showError("");
-  const res = await req(`${API}/login`, {
-    method: "POST",
-    // login-endpointen använder inte headern, men det skadar inte att skicka den
-    body: JSON.stringify({ password })
-  });
-
-  if (!res || !res.ok) throw new Error("Login misslyckades");
-
+  await req(`${API}/login`, { method:"POST", body: JSON.stringify({ password }) });
   APP_PASSWORD = password;
   localStorage.setItem("APP_PASSWORD", APP_PASSWORD);
-
   setLoggedIn(true);
   await load();
 }
 
-function doLogout() {
+function doLogout(){
   APP_PASSWORD = "";
   localStorage.removeItem("APP_PASSWORD");
   tbody.innerHTML = "";
@@ -174,19 +146,22 @@ function doLogout() {
   showError("Utloggad.");
 }
 
-async function load() {
+async function load(){
   showError("");
   const friends = await req(`${API}/friends`);
   tbody.innerHTML = "";
 
-  for (const f of friends) {
+  for (const f of friends){
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${escapeHtml(f.name)}</td>
       <td>${fmt(f.totalLiters)}</td>
       <td>${fmt(f.totalSek)}</td>
+      <td>${fmt(f.paidSek)}</td>
+      <td class="kvar">${fmt(f.remainingSek)}</td>
       <td class="row">
         <button type="button" data-act="add" data-id="${f.id}">+ liter</button>
+        <button type="button" data-act="pay" data-id="${f.id}">betalt</button>
         <button type="button" data-act="rename" data-id="${f.id}">byt namn</button>
         <button type="button" data-act="reset" data-id="${f.id}">nollställ</button>
         <button type="button" class="danger" data-act="del" data-id="${f.id}">ta bort</button>
@@ -196,21 +171,20 @@ async function load() {
   }
 }
 
-// UI events
 loginBtn.addEventListener("click", async () => {
-  try {
+  try{
     const pw = (passwordInput.value || "").trim();
     if (!pw) return showError("Skriv lösenord.");
     await doLogin(pw);
     passwordInput.value = "";
-  } catch (e) {
-    showError(e.message);
+  }catch(e){
+    showError(e.message || "Fel lösenord.");
     setLoggedIn(false);
   }
 });
 
-passwordInput.addEventListener("keydown", async (e) => {
-  if (e.key === "Enter") {
+passwordInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter"){
     e.preventDefault();
     loginBtn.click();
   }
@@ -220,18 +194,14 @@ logoutBtn.addEventListener("click", () => doLogout());
 
 addForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  try {
+  try{
     const name = nameInput.value.trim();
     if (name.length < 2) return showError("Namn måste vara minst 2 tecken.");
 
-    await req(`${API}/friends`, {
-      method: "POST",
-      body: JSON.stringify({ name })
-    });
-
+    await req(`${API}/friends`, { method:"POST", body: JSON.stringify({ name }) });
     nameInput.value = "";
     await load();
-  } catch (err) {
+  }catch(err){
     showError(err.message);
     if (String(err.message || "").includes("401")) doLogout();
   }
@@ -239,10 +209,10 @@ addForm.addEventListener("submit", async (e) => {
 
 resetAllBtn.addEventListener("click", async () => {
   if (!confirm("Nollställ ALLA?")) return;
-  try {
-    await req(`${API}/reset-all`, { method: "POST" });
+  try{
+    await req(`${API}/reset-all`, { method:"POST" });
     await load();
-  } catch (err) {
+  }catch(err){
     showError(err.message);
     if (String(err.message || "").includes("401")) doLogout();
   }
@@ -255,62 +225,63 @@ tbody.addEventListener("click", async (e) => {
   const id = btn.dataset.id;
   const act = btn.dataset.act;
 
-  try {
+  try{
     showError("");
 
-    if (act === "add") {
+    if (act === "add"){
       const litersStr = prompt("Liter att lägga till:", "1");
       if (litersStr === null) return;
       const liters = Number(litersStr);
       if (!Number.isFinite(liters) || liters <= 0) return showError("Liter måste vara ett tal > 0.");
 
-      await req(`${API}/friends/${id}/add-liters`, {
-        method: "POST",
-        body: JSON.stringify({ liters })
-      });
+      await req(`${API}/friends/${id}/add-liters`, { method:"POST", body: JSON.stringify({ liters }) });
     }
 
-    if (act === "rename") {
+    if (act === "pay"){
+      const amountStr = prompt("Hur mycket har personen betalat (kr)?", "100");
+      if (amountStr === null) return;
+      const amount = Number(amountStr);
+      if (!Number.isFinite(amount) || amount <= 0) return showError("Belopp måste vara ett tal > 0.");
+
+      await req(`${API}/friends/${id}/pay`, { method:"POST", body: JSON.stringify({ amount }) });
+    }
+
+    if (act === "rename"){
       const name = prompt("Nytt namn:");
       if (name === null) return;
       const cleaned = name.trim();
       if (cleaned.length < 2) return showError("Namn måste vara minst 2 tecken.");
 
-      await req(`${API}/friends/${id}`, {
-        method: "PUT",
-        body: JSON.stringify({ name: cleaned })
-      });
+      await req(`${API}/friends/${id}`, { method:"PUT", body: JSON.stringify({ name: cleaned }) });
     }
 
-    if (act === "reset") {
+    if (act === "reset"){
       if (!confirm("Nollställ vän?")) return;
-      await req(`${API}/friends/${id}/reset`, { method: "POST" });
+      await req(`${API}/friends/${id}/reset`, { method:"POST" });
     }
 
-    if (act === "del") {
+    if (act === "del"){
       if (!confirm("Ta bort vän?")) return;
-      await req(`${API}/friends/${id}`, { method: "DELETE" });
+      await req(`${API}/friends/${id}`, { method:"DELETE" });
     }
 
     await load();
-  } catch (err) {
+  }catch(err){
     showError(err.message);
     if (String(err.message || "").includes("401")) doLogout();
   }
 });
 
-// Auto: om vi har sparat lösenord, testa att ladda data.
-// Om 401 -> logga ut och visa login.
-(async function boot() {
-  try {
-    if (APP_PASSWORD) {
+// Auto-boot: om vi har sparat lösenord, prova att ladda
+(async function boot(){
+  try{
+    if (APP_PASSWORD){
       setLoggedIn(true);
       await load();
-    } else {
+    }else{
       setLoggedIn(false);
     }
-  } catch (e) {
-    // fel lösen -> rensa
+  }catch{
     doLogout();
   }
 })();
