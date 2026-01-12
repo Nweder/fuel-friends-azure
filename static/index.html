@@ -40,8 +40,8 @@
       <button id="loginBtn" type="button">Logga in</button>
       <button id="logoutBtn" type="button" class="danger">Logga ut</button>
     </div>
-    <!-- <div class="note">Lösenordet finns i Azure som env <code>APP_PASSWORD</code>.</div>
-  </div> -->
+    <div class="note">Lösenordet finns i Azure som env <code>APP_PASSWORD</code>.</div>
+  </div>
 
   <div id="error" class="error"></div>
 
@@ -49,17 +49,17 @@
   <form id="addForm" class="row hidden" autocomplete="off">
     <input id="nameInput" placeholder="Namn (minst 2 tecken)" />
     <button type="submit">Lägg till</button>
-   <!-- <button type="button" class="danger" id="resetAllBtn">Nollställ alla</button> -->
-  </form> 
+    <button type="button" class="danger" id="resetAllBtn">Nollställ alla</button>
+  </form>
 
   <table id="table" class="hidden">
     <thead>
       <tr>
         <th>Namn</th>
-        <th>Liter</th>
-        <th>Total (kr)</th>
-        <th>Betalt (kr)</th>
-        <th>Kvar (kr)</th>
+        <th>Liter (kvar)</th>
+        <th>Summa (kvar)</th>
+        <th>Betalt (totalt)</th>
+        <th>Kvar</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -243,6 +243,7 @@ tbody.addEventListener("click", async (e) => {
       const amount = Number(amountStr);
       if (!Number.isFinite(amount) || amount <= 0) return showError("Belopp måste vara ett tal > 0.");
 
+      // ✅ backend kommer att minska liters också
       await req(`${API}/friends/${id}/pay`, { method:"POST", body: JSON.stringify({ amount }) });
     }
 
@@ -272,7 +273,7 @@ tbody.addEventListener("click", async (e) => {
   }
 });
 
-// Auto-boot: om vi har sparat lösenord, prova att ladda
+// Auto-boot
 (async function boot(){
   try{
     if (APP_PASSWORD){
