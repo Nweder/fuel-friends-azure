@@ -13,7 +13,9 @@ PRICE_PER_LITER = 10.0
 # Azure persistent: /home/fuel.db
 DB_PATH = os.getenv("DB_PATH", "./fuel.db")
 
-APP_PASSWORD = os.getenv("APP_PASSWORD")  # set in Azure Configuration (no default)
+# set in Azure Configuration (no default recommended in prod)
+APP_PASSWORD = os.getenv("APP_PASSWORD")
+
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 
 app = FastAPI(title="Fuel Friends")
@@ -57,7 +59,6 @@ def init_db():
     conn = connect()
     cur = conn.cursor()
 
-    # Create table (new installs)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS friends (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,11 +69,11 @@ def init_db():
         )
     """)
 
-    # Upgrade existing DB (older installs without paid_sek)
+    # Upgrade old DBs (if paid_sek missing)
     try:
         cur.execute("ALTER TABLE friends ADD COLUMN paid_sek REAL NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
-        pass  # already exists
+        pass
 
     conn.commit()
     conn.close()
@@ -84,11 +85,14 @@ def startup():
 def now_utc_iso():
     return datetime.now(timezone.utc).isoformat()
 
-def calc_total_sek(total_liters: float) -> float:
-    return round(float(total_liters) * PRICE_PER_LITER, 2)
+def calc_total_sek(liters: float) -> float:
+    return round(float(liters) * PRICE_PER_LITER, 2)
 
 def clean_name(name: str) -> str:
     return name.strip()
+
+def round2(x: float) -> float:
+    return round(float(x), 2)
 
 # ---------- MODELS ----------
 class FriendCreate(BaseModel):
@@ -114,18 +118,17 @@ def list_friends():
 
     out = []
     for r in rows:
-        liters = float(r["total_liters"])
-        total_sek = calc_total_sek(liters)
+        liters = float(r["total_liters"])  # KVAR liters
+        total_sek = calc_total_sek(liters)  # KVAR summa
         paid = float(r["paid_sek"])
-        remaining = round(total_sek - paid, 2)
 
         out.append({
             "id": int(r["id"]),
             "name": r["name"],
-            "totalLiters": liters,
-            "totalSek": total_sek,
-            "paidSek": round(paid, 2),
-            "remainingSek": remaining
+            "totalLiters": round2(liters),
+            "totalSek": round2(total_sek),
+            "paidSek": round2(paid),
+            "remainingSek": round2(total_sek),  # samma som totalSek eftersom liters = kvar
         })
     return out
 
@@ -168,9 +171,15 @@ def rename_friend(id: int, body: FriendUpdate):
     liters = float(row["total_liters"])
     total_sek = calc_total_sek(liters)
     paid = float(row["paid_sek"])
-    remaining = round(total_sek - paid, 2)
 
-    return {"id": id, "name": name, "totalLiters": liters, "totalSek": total_sek, "paidSek": round(paid, 2), "remainingSek": remaining}
+    return {
+        "id": id,
+        "name": name,
+        "totalLiters": round2(liters),
+        "totalSek": round2(total_sek),
+        "paidSek": round2(paid),
+        "remainingSek": round2(total_sek),
+    }
 
 @app.delete("/api/friends/{id}", status_code=204, dependencies=[Depends(require_password)])
 def delete_friend(id: int):
@@ -198,20 +207,28 @@ def add_liters(id: int, body: AddLitersBody):
         conn.close()
         raise HTTPException(status_code=404, detail="Friend not found.")
 
-    new_total_liters = float(row["total_liters"]) + liters_to_add
-    cur.execute("UPDATE friends SET total_liters = ? WHERE id = ?", (new_total_liters, id))
+    new_liters = float(row["total_liters"]) + liters_to_add
+    cur.execute("UPDATE friends SET total_liters = ? WHERE id = ?", (new_liters, id))
     conn.commit()
     conn.close()
 
-    total_sek = calc_total_sek(new_total_liters)
+    total_sek = calc_total_sek(new_liters)
     paid = float(row["paid_sek"])
-    remaining = round(total_sek - paid, 2)
 
-    return {"id": id, "name": row["name"], "totalLiters": new_total_liters, "totalSek": total_sek, "paidSek": round(paid, 2), "remainingSek": remaining}
+    return {
+        "id": id,
+        "name": row["name"],
+        "totalLiters": round2(new_liters),
+        "totalSek": round2(total_sek),
+        "paidSek": round2(paid),
+        "remainingSek": round2(total_sek),
+    }
 
+# ✅ NY LOGIK: betalt minskar liters också
 @app.post("/api/friends/{id}/pay", dependencies=[Depends(require_password)])
 def pay_friend(id: int, body: PayBody):
     amount = float(body.amount)
+    liters_to_subtract = amount / PRICE_PER_LITER  # 100kr => 10L
 
     conn = connect()
     cur = conn.cursor()
@@ -221,20 +238,36 @@ def pay_friend(id: int, body: PayBody):
         conn.close()
         raise HTTPException(status_code=404, detail="Friend not found.")
 
-    liters = float(row["total_liters"])
-    total_sek = calc_total_sek(liters)
+    current_liters = float(row["total_liters"])
+    current_paid = float(row["paid_sek"])
 
-    new_paid = float(row["paid_sek"]) + amount
-    if new_paid > total_sek:
+    if liters_to_subtract > current_liters + 1e-9:
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Betalt kan inte bli mer än totalsumman ({total_sek} kr).")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Kan inte betala {round2(amount)} kr (= {round2(liters_to_subtract)} L). Personen har bara {round2(current_liters)} L kvar."
+        )
 
-    cur.execute("UPDATE friends SET paid_sek = ? WHERE id = ?", (new_paid, id))
+    new_liters = current_liters - liters_to_subtract
+    new_paid = current_paid + amount
+
+    cur.execute(
+        "UPDATE friends SET total_liters = ?, paid_sek = ? WHERE id = ?",
+        (new_liters, new_paid, id)
+    )
     conn.commit()
     conn.close()
 
-    remaining = round(total_sek - new_paid, 2)
-    return {"id": id, "name": row["name"], "totalLiters": liters, "totalSek": total_sek, "paidSek": round(new_paid, 2), "remainingSek": remaining}
+    total_sek = calc_total_sek(new_liters)  # KVAR summa efter betalning
+
+    return {
+        "id": id,
+        "name": row["name"],
+        "totalLiters": round2(new_liters),
+        "totalSek": round2(total_sek),
+        "paidSek": round2(new_paid),
+        "remainingSek": round2(total_sek),
+    }
 
 @app.post("/api/friends/{id}/reset", dependencies=[Depends(require_password)])
 def reset_friend(id: int):
@@ -246,6 +279,7 @@ def reset_friend(id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Friend not found.")
 
+    # reset både liters och betalt
     cur.execute("UPDATE friends SET total_liters = 0, paid_sek = 0 WHERE id = ?", (id,))
     conn.commit()
     conn.close()
