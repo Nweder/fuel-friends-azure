@@ -207,16 +207,18 @@ addForm.addEventListener("submit", async (e) => {
   }
 });
 
-resetAllBtn.addEventListener("click", async () => {
-  if (!confirm("Nollställ ALLA?")) return;
-  try{
-    await req(`${API}/reset-all`, { method:"POST" });
-    await load();
-  }catch(err){
-    showError(err.message);
-    if (String(err.message || "").includes("401")) doLogout();
-  }
-});
+if (resetAllBtn) {
+  resetAllBtn.addEventListener("click", async () => {
+    if (!confirm("Nollställ ALLA?")) return;
+    try{
+      await req(`${API}/reset-all`, { method:"POST" });
+      await load();
+    }catch(err){
+      showError(err.message);
+      if (String(err.message || "").includes("401")) doLogout();
+    }
+  });
+}
 
 tbody.addEventListener("click", async (e) => {
   const btn = e.target.closest("button");
