@@ -224,7 +224,7 @@ def add_liters(id: int, body: AddLitersBody):
         "remainingSek": round2(total_sek),
     }
 
-# ✅ NY LOGIK: betalt minskar liters också
+# ✅ NY LOGIK: betalt kan ge överskott (positiv balans)
 @app.post("/api/friends/{id}/pay", dependencies=[Depends(require_password)])
 def pay_friend(id: int, body: PayBody):
     amount = float(body.amount)
@@ -241,13 +241,7 @@ def pay_friend(id: int, body: PayBody):
     current_liters = float(row["total_liters"])
     current_paid = float(row["paid_sek"])
 
-    if liters_to_subtract > current_liters + 1e-9:
-        conn.close()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Kan inte betala {round2(amount)} kr (= {round2(liters_to_subtract)} L). Personen har bara {round2(current_liters)} L kvar."
-        )
-
+    # Tillåt överbetalning - liters kan bli negativa (= överskott)
     new_liters = current_liters - liters_to_subtract
     new_paid = current_paid + amount
 
@@ -258,7 +252,7 @@ def pay_friend(id: int, body: PayBody):
     conn.commit()
     conn.close()
 
-    total_sek = calc_total_sek(new_liters)  # KVAR summa efter betalning
+    total_sek = calc_total_sek(new_liters)  # Negativa liter = negativt saldo = överskott
 
     return {
         "id": id,

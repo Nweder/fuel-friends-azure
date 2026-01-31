@@ -28,6 +28,8 @@
     .card{background:rgba(255,255,255,0.85); border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:14px; margin-top:12px;}
     .hidden{display:none !important;}
     .kvar{font-weight:700;}
+    .positive{color:#2e7d32; font-weight:700;}
+    .negative{color:#c62828; font-weight:700;}
   </style>
 </head>
 <body>
@@ -153,12 +155,26 @@ async function load(){
 
   for (const f of friends){
     const tr = document.createElement("tr");
+    
+    // Bestäm CSS-klass baserat på saldo
+    let kvarClass = "kvar";
+    if (f.remainingSek < 0) {
+      kvarClass += " positive"; // Överskott (negativ skuld) = grönt
+    } else if (f.remainingSek > 0) {
+      kvarClass += " negative"; // Skuld = rött
+    }
+    
+    // Visa överskott med plustecken
+    const kvarText = f.remainingSek < 0 
+      ? `+${fmt(Math.abs(f.remainingSek))}` 
+      : fmt(f.remainingSek);
+    
     tr.innerHTML = `
       <td>${escapeHtml(f.name)}</td>
       <td>${fmt(f.totalLiters)}</td>
       <td>${fmt(f.totalSek)}</td>
       <td>${fmt(f.paidSek)}</td>
-      <td class="kvar">${fmt(f.remainingSek)}</td>
+      <td class="${kvarClass}">${kvarText}</td>
       <td class="row">
         <button type="button" data-act="add" data-id="${f.id}">+ liter</button>
         <button type="button" data-act="pay" data-id="${f.id}">betalt</button>
@@ -245,7 +261,7 @@ tbody.addEventListener("click", async (e) => {
       const amount = Number(amountStr);
       if (!Number.isFinite(amount) || amount <= 0) return showError("Belopp måste vara ett tal > 0.");
 
-      // ✅ backend kommer att minska liters också
+      // ✅ backend tillåter nu överbetalning - skapar överskott
       await req(`${API}/friends/${id}/pay`, { method:"POST", body: JSON.stringify({ amount }) });
     }
 
