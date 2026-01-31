@@ -18,18 +18,48 @@
 
     h1 { margin-bottom: 12px; }
     .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
-    input,button{padding:10px 12px;}
+    input,button{padding:10px 12px; font-size:14px;}
+    button{cursor:pointer; border:1px solid #ccc; background:#fff; border-radius:4px;}
+    button:hover{background:#f5f5f5;}
+    
+    /* Mobilanpassad tabell */
     table{width:100%; border-collapse:collapse; margin-top:12px; background:rgba(255,255,255,0.75);}
     th,td{border-bottom:1px solid #ddd; padding:10px; text-align:left; vertical-align:top;}
+    
     .error{background:#ffe5e5; border:1px solid #ffb3b3; padding:10px; margin-top:10px; display:none;}
     .danger{background:#c62828; color:white; border:0;}
-    button{cursor:pointer;}
     .note{font-size:12px; opacity:0.8; margin-top:8px;}
     .card{background:rgba(255,255,255,0.85); border:1px solid rgba(0,0,0,0.08); border-radius:10px; padding:14px; margin-top:12px;}
     .hidden{display:none !important;}
     .kvar{font-weight:700;}
     .positive{color:#2e7d32; font-weight:700;}
     .negative{color:#c62828; font-weight:700;}
+    
+    /* Historik */
+    .history-row{display:none; background:#f9f9f9;}
+    .history-row.show{display:table-row;}
+    .history-content{padding:12px; font-size:13px;}
+    .history-item{padding:6px 0; border-bottom:1px solid #eee;}
+    .history-item:last-child{border:0;}
+    .history-date{color:#666; font-size:11px;}
+    .history-toggle{cursor:pointer; color:#1976d2; text-decoration:underline;}
+    
+    /* Mobilanpassning */
+    @media (max-width: 768px) {
+      body{margin:12px 8px; padding:0 8px;}
+      h1{font-size:24px;}
+      input,button{padding:12px; font-size:16px; touch-action:manipulation;}
+      
+      /* Göm mindre viktiga kolumner på mobil */
+      .hide-mobile{display:none;}
+      
+      /* Större knappar på mobil */
+      button{min-height:44px; min-width:44px;}
+      
+      /* Stack knappar vertikalt på små skärmar */
+      .action-buttons{flex-direction:column; width:100%;}
+      .action-buttons button{width:100%; margin:2px 0;}
+    }
   </style>
 </head>
 <body>
@@ -58,9 +88,9 @@
     <thead>
       <tr>
         <th>Namn</th>
-        <th>Liter (kvar)</th>
-        <th>Summa (kvar)</th>
-        <th>Betalt (totalt)</th>
+        <th class="hide-mobile">Liter (kvar)</th>
+        <th class="hide-mobile">Summa (kvar)</th>
+        <th class="hide-mobile">Betalt (totalt)</th>
         <th>Kvar</th>
         <th>Actions</th>
       </tr>
@@ -170,20 +200,75 @@ async function load(){
       : fmt(f.remainingSek);
     
     tr.innerHTML = `
-      <td>${escapeHtml(f.name)}</td>
-      <td>${fmt(f.totalLiters)}</td>
-      <td>${fmt(f.totalSek)}</td>
-      <td>${fmt(f.paidSek)}</td>
+      <td>
+        ${escapeHtml(f.name)}<br>
+        <span class="history-toggle" data-id="${f.id}">📋 Visa historik</span>
+      </td>
+      <td class="hide-mobile">${fmt(f.totalLiters)}</td>
+      <td class="hide-mobile">${fmt(f.totalSek)}</td>
+      <td class="hide-mobile">${fmt(f.paidSek)}</td>
       <td class="${kvarClass}">${kvarText}</td>
-      <td class="row">
-        <button type="button" data-act="add" data-id="${f.id}">+ liter</button>
-        <button type="button" data-act="pay" data-id="${f.id}">betalt</button>
-        <button type="button" data-act="rename" data-id="${f.id}">byt namn</button>
-        <button type="button" data-act="reset" data-id="${f.id}">nollställ</button>
-        <button type="button" class="danger" data-act="del" data-id="${f.id}">ta bort</button>
+      <td>
+        <div class="row action-buttons">
+          <button type="button" data-act="add" data-id="${f.id}">+ liter</button>
+          <button type="button" data-act="pay" data-id="${f.id}">betalt</button>
+          <button type="button" data-act="rename" data-id="${f.id}">byt namn</button>
+          <button type="button" data-act="reset" data-id="${f.id}">nollställ</button>
+          <button type="button" class="danger" data-act="del" data-id="${f.id}">ta bort</button>
+        </div>
       </td>
     `;
     tbody.appendChild(tr);
+    
+    // Lägg till historik-rad (dold initialt)
+    const historyTr = document.createElement("tr");
+    historyTr.className = "history-row";
+    historyTr.dataset.id = f.id;
+    historyTr.innerHTML = `
+      <td colspan="6">
+        <div class="history-content" data-id="${f.id}">
+          <em>Laddar historik...</em>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(historyTr);
+  }
+}
+
+async function loadHistory(friendId){
+  const historyContent = document.querySelector(`.history-content[data-id="${friendId}"]`);
+  try{
+    const transactions = await req(`${API}/friends/${friendId}/transactions`);
+    
+    if (transactions.length === 0){
+      historyContent.innerHTML = "<em>Ingen historik ännu.</em>";
+      return;
+    }
+    
+    let html = "";
+    for (const t of transactions){
+      const date = new Date(t.createdAt).toLocaleString("sv-SE", {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+      
+      let icon = "📝";
+      if (t.type === "add_liters") icon = "⛽";
+      if (t.type === "payment") icon = "💰";
+      if (t.type === "reset") icon = "🔄";
+      if (t.type === "created") icon = "✨";
+      
+      html += `
+        <div class="history-item">
+          ${icon} ${escapeHtml(t.description)}
+          <div class="history-date">${date}</div>
+        </div>
+      `;
+    }
+    
+    historyContent.innerHTML = html;
+  }catch(err){
+    historyContent.innerHTML = `<em>Kunde inte ladda historik: ${err.message}</em>`;
   }
 }
 
@@ -237,6 +322,22 @@ if (resetAllBtn) {
 }
 
 tbody.addEventListener("click", async (e) => {
+  // Hantera historik-toggle
+  if (e.target.classList.contains("history-toggle")){
+    const friendId = e.target.dataset.id;
+    const historyRow = document.querySelector(`.history-row[data-id="${friendId}"]`);
+    
+    if (historyRow.classList.contains("show")){
+      historyRow.classList.remove("show");
+      e.target.textContent = "📋 Visa historik";
+    } else {
+      historyRow.classList.add("show");
+      e.target.textContent = "📋 Dölj historik";
+      await loadHistory(friendId);
+    }
+    return;
+  }
+  
   const btn = e.target.closest("button");
   if (!btn) return;
 

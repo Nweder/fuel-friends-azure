@@ -75,6 +75,19 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Transaktionslogg
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            friend_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            description TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (friend_id) REFERENCES friends(id) ON DELETE CASCADE
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -93,6 +106,15 @@ def clean_name(name: str) -> str:
 
 def round2(x: float) -> float:
     return round(float(x), 2)
+
+def log_transaction(conn, friend_id: int, trans_type: str, amount: float, description: str):
+    """Logga en transaktion till databasen"""
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO transactions (friend_id, type, amount, description, created_at) VALUES (?, ?, ?, ?, ?)",
+        (friend_id, trans_type, amount, description, now_utc_iso())
+    )
+    conn.commit()
 
 # ---------- MODELS ----------
 class FriendCreate(BaseModel):
@@ -146,6 +168,10 @@ def create_friend(body: FriendCreate):
     )
     conn.commit()
     new_id = cur.lastrowid
+    
+    # Logga skapande
+    log_transaction(conn, new_id, "created", 0.0, f"Skapade kontakt: {name}")
+    
     conn.close()
 
     return {"id": new_id, "name": name, "totalLiters": 0.0, "totalSek": 0.0, "paidSek": 0.0, "remainingSek": 0.0}
@@ -209,6 +235,10 @@ def add_liters(id: int, body: AddLitersBody):
 
     new_liters = float(row["total_liters"]) + liters_to_add
     cur.execute("UPDATE friends SET total_liters = ? WHERE id = ?", (new_liters, id))
+    
+    # Logga transaktion
+    log_transaction(conn, id, "add_liters", liters_to_add, f"Lade till {round2(liters_to_add)} L")
+    
     conn.commit()
     conn.close()
 
@@ -249,6 +279,10 @@ def pay_friend(id: int, body: PayBody):
         "UPDATE friends SET total_liters = ?, paid_sek = ? WHERE id = ?",
         (new_liters, new_paid, id)
     )
+    
+    # Logga betalning
+    log_transaction(conn, id, "payment", amount, f"Betalade {round2(amount)} kr")
+    
     conn.commit()
     conn.close()
 
@@ -275,6 +309,10 @@ def reset_friend(id: int):
 
     # reset både liters och betalt
     cur.execute("UPDATE friends SET total_liters = 0, paid_sek = 0 WHERE id = ?", (id,))
+    
+    # Logga nollställning
+    log_transaction(conn, id, "reset", 0.0, "Nollställde kontot")
+    
     conn.commit()
     conn.close()
 
@@ -288,6 +326,40 @@ def reset_all():
     conn.commit()
     conn.close()
     return {"ok": True}
+
+@app.get("/api/friends/{id}/transactions", dependencies=[Depends(require_password)])
+def get_transactions(id: int):
+    conn = connect()
+    cur = conn.cursor()
+    
+    # Kontrollera att personen finns
+    cur.execute("SELECT id FROM friends WHERE id = ?", (id,))
+    if not cur.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Friend not found.")
+    
+    # Hämta transaktioner
+    cur.execute("""
+        SELECT id, type, amount, description, created_at 
+        FROM transactions 
+        WHERE friend_id = ? 
+        ORDER BY created_at DESC
+        LIMIT 50
+    """, (id,))
+    rows = cur.fetchall()
+    conn.close()
+    
+    transactions = []
+    for r in rows:
+        transactions.append({
+            "id": int(r["id"]),
+            "type": r["type"],
+            "amount": round2(r["amount"]),
+            "description": r["description"],
+            "createdAt": r["created_at"]
+        })
+    
+    return transactions
 
 # Frontend (static/)
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
