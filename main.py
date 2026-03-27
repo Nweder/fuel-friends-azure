@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-PRICE_PER_LITER = 10.0
+PRICE_PER_LITER = 12.0
 
 # Local: ./fuel.db
 # Azure persistent: /home/fuel.db
